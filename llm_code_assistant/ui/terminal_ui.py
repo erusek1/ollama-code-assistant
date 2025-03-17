@@ -715,3 +715,131 @@ class TerminalUI:
                         relevant_lines = []
                         for line in content_lines:
                             if line.startswith("## Assistant"):
+                                self.console.print(f"[bold red]Error exporting notes to '{file_path}'.[/bold red]")
+    
+    def _import_notes(self):
+        """Import notes from a file."""
+        file_path = Prompt.ask("Enter import file path")
+        
+        if not os.path.exists(file_path):
+            self.console.print(f"[bold red]File '{file_path}' does not exist.[/bold red]")
+            return
+        
+        count = self.notes_manager.import_notes(file_path)
+        
+        if count > 0:
+            self.console.print(f"[bold green]Successfully imported {count} notes from '{file_path}'.[/bold green]")
+        else:
+            self.console.print(f"[bold red]No notes imported from '{file_path}'.[/bold red]")
+    
+    def _check_for_relevant_notes(self, user_input: str) -> Optional[str]:
+        """
+        Check if there are relevant notes for the user's input.
+        
+        Args:
+            user_input: User's input message
+            
+        Returns:
+            Enhanced context with relevant notes, or None if no relevant notes found
+        """
+        # Check if the input mentions a specific file
+        file_match = re.search(r"([\"'].+[\"']|\S+\.\w+)", user_input)
+        if file_match:
+            possible_file = file_match.group(1).strip("\"'")
+            if os.path.exists(possible_file):
+                # Get notes related to this file
+                file_notes = self.notes_manager.get_context_notes("file_path", possible_file)
+                if file_notes:
+                    # Format notes for context
+                    context = f"Notes related to file '{possible_file}':\n"
+                    for note in file_notes[:3]:  # Limit to 3 notes to avoid token limits
+                        context += f"- {note['title']}:\n"
+                        
+                        # Get a brief snippet
+                        content_lines = note["content"].split("\n")
+                        relevant_lines = []
+                        for line in content_lines:
+                            if line.startswith("## Assistant"):
+                                relevant_lines = []
+                            elif relevant_lines or line.startswith("## User"):
+                                relevant_lines.append(line)
+                        
+                        snippet = "\n  ".join(relevant_lines[:5])
+                        if len(relevant_lines) > 5:
+                            snippet += "\n  ..."
+                        
+                        context += f"  {snippet}\n\n"
+                    
+                    return context
+        
+        # Search for keywords in notes
+        words = re.findall(r'\b\w{4,}\b', user_input.lower())
+        for word in words:
+            if len(word) < 4:
+                continue
+                
+            notes = self.notes_manager.search_notes(word)
+            if notes:
+                # Format notes for context
+                context = f"Notes related to '{word}':\n"
+                for note in notes[:2]:  # Limit to 2 notes per keyword
+                    context += f"- {note['title']}:\n"
+                    
+                    # Get a brief snippet around the keyword
+                    content = note["content"]
+                    keyword_pos = content.lower().find(word.lower())
+                    if keyword_pos != -1:
+                        start = max(0, keyword_pos - 40)
+                        end = min(len(content), keyword_pos + len(word) + 100)
+                        snippet = content[start:end]
+                        
+                        # Add ellipsis if truncated
+                        if start > 0:
+                            snippet = "..." + snippet
+                        if end < len(content):
+                            snippet += "..."
+                        
+                        context += f"  {snippet}\n\n"
+                
+                return context
+        
+        return None
+    
+    def _extract_code_block(self, text: str) -> Optional[str]:
+        """
+        Extract code block from text.
+        
+        Args:
+            text: Text containing code block
+            
+        Returns:
+            Code block or None if not found
+        """
+        # Try to find triple backtick code blocks
+        pattern = r"```(?:\w+)?\n([\s\S]*?)\n```"
+        matches = re.findall(pattern, text)
+        
+        if matches:
+            return matches[0]
+        
+        return None
+    
+    def _extract_files_from_response(self, response: str) -> Tuple[List[str], List[str]]:
+        """
+        Extract file paths and code blocks from a response.
+        
+        Args:
+            response: LLM response
+            
+        Returns:
+            Tuple of (file_paths, code_blocks)
+        """
+        # Look for file paths
+        file_path_pattern = r"([a-zA-Z0-9_\-/.]+\.[a-zA-Z0-9]+):"
+        file_paths = re.findall(file_path_pattern, response)
+        
+        # Extract code blocks
+        code_block_pattern = r"```(?:\w+)?\n([\s\S]*?)\n```"
+        code_blocks = re.findall(code_block_pattern, response)
+        
+        return file_paths, code_blocks
