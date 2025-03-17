@@ -312,3 +312,406 @@ class TerminalUI:
         conversation_history = [
             ("system", "You are a helpful AI assistant for analyzing and generating code.")
         ]
+        
+        while True:
+            try:
+                user_input = Prompt.ask("\nYou")
+                
+                if user_input.lower() == 'exit':
+                    break
+                
+                # Check for note commands
+                if user_input.lower().startswith('note '):
+                    parts = user_input[5:].strip().split(' ', 1)
+                    sub_command = parts[0].lower()
+                    
+                    if sub_command == 'save':
+                        if len(parts) < 2:
+                            self.console.print("[bold red]Error: Please provide a title for the note.[/bold red]")
+                            continue
+                        
+                        title = parts[1]
+                        
+                        # Get the last exchange
+                        last_user_message = None
+                        last_assistant_message = None
+                        
+                        for i in range(len(conversation_history) - 1, -1, -1):
+                            role, content = conversation_history[i]
+                            if role == "assistant" and last_assistant_message is None:
+                                last_assistant_message = content
+                            elif role == "user" and last_assistant_message is not None and last_user_message is None:
+                                last_user_message = content
+                                break
+                        
+                        if last_user_message is None or last_assistant_message is None:
+                            self.console.print("[bold red]Error: No conversation to save.[/bold red]")
+                            continue
+                        
+                        # Create note content
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        content = f"# {title}\n\n"
+                        content += f"Created: {timestamp}\n\n"
+                        content += f"## User\n{last_user_message}\n\n"
+                        content += f"## Assistant\n{last_assistant_message}\n"
+                        
+                        # Determine context
+                        context = {}
+                        
+                        # Check if the conversation relates to a specific file
+                        file_match = re.search(r"([\"'].+[\"']|\S+\.\w+)", last_user_message)
+                        if file_match:
+                            possible_file = file_match.group(1).strip("\"'")
+                            if os.path.exists(possible_file):
+                                context["file_path"] = possible_file
+                        
+                        # Save the note
+                        note_id = self.notes_manager.add_note(
+                            title=title,
+                            content=content,
+                            tags=["conversation"],
+                            context=context
+                        )
+                        
+                        self.console.print(f"[bold green]Note saved with ID: {note_id}[/bold green]")
+                    
+                    elif sub_command == 'list':
+                        notes = self.notes_manager.list_notes()
+                        
+                        if not notes:
+                            self.console.print("[bold yellow]No notes found.[/bold yellow]")
+                            continue
+                        
+                        table = Table(title=f"Found {len(notes)} notes")
+                        table.add_column("ID", style="cyan")
+                        table.add_column("Title", style="green")
+                        table.add_column("Created", style="magenta")
+                        table.add_column("Tags", style="yellow")
+                        
+                        for note in notes:
+                            created = datetime.fromtimestamp(note["created"]).strftime("%Y-%m-%d %H:%M")
+                            tags = ", ".join(note["tags"]) if note["tags"] else ""
+                            table.add_row(note["id"], note["title"], created, tags)
+                        
+                        self.console.print(table)
+                    
+                    elif sub_command == 'search':
+                        if len(parts) < 2:
+                            self.console.print("[bold red]Error: Please provide a search query.[/bold red]")
+                            continue
+                        
+                        query = parts[1]
+                        notes = self.notes_manager.search_notes(query)
+                        
+                        if not notes:
+                            self.console.print(f"[bold yellow]No notes found matching '{query}'.[/bold yellow]")
+                            continue
+                        
+                        table = Table(title=f"Found {len(notes)} notes matching '{query}'")
+                        table.add_column("ID", style="cyan")
+                        table.add_column("Title", style="green")
+                        table.add_column("Created", style="magenta")
+                        table.add_column("Snippet", style="white")
+                        
+                        for note in notes:
+                            created = datetime.fromtimestamp(note["created"]).strftime("%Y-%m-%d %H:%M")
+                            
+                            # Find snippet around the query
+                            content = note["content"]
+                            query_pos = content.lower().find(query.lower())
+                            if query_pos != -1:
+                                start = max(0, query_pos - 20)
+                                end = min(len(content), query_pos + len(query) + 50)
+                                snippet = content[start:end]
+                                
+                                # Add ellipsis if truncated
+                                if start > 0:
+                                    snippet = "..." + snippet
+                                if end < len(content):
+                                    snippet += "..."
+                            else:
+                                snippet = ""
+                            
+                            table.add_row(note["id"], note["title"], created, snippet)
+                        
+                        self.console.print(table)
+                    
+                    elif sub_command == 'get':
+                        if len(parts) < 2:
+                            self.console.print("[bold red]Error: Please provide a note ID.[/bold red]")
+                            continue
+                        
+                        note_id = parts[1]
+                        note = self.notes_manager.get_note(note_id)
+                        
+                        if not note:
+                            self.console.print(f"[bold red]Note with ID '{note_id}' not found.[/bold red]")
+                            continue
+                        
+                        self.console.print(Panel(Markdown(note["content"]), 
+                                                title=note["title"],
+                                                subtitle=f"Created: {datetime.fromtimestamp(note['created']).strftime('%Y-%m-%d %H:%M')}"))
+                    
+                    elif sub_command == 'context':
+                        if len(parts) < 2:
+                            self.console.print("[bold red]Error: Please provide a file path.[/bold red]")
+                            continue
+                        
+                        file_path = parts[1]
+                        
+                        if not os.path.exists(file_path):
+                            self.console.print(f"[bold red]File '{file_path}' does not exist.[/bold red]")
+                            continue
+                        
+                        notes = self.notes_manager.get_context_notes("file_path", file_path)
+                        
+                        if not notes:
+                            self.console.print(f"[bold yellow]No notes found for file '{file_path}'.[/bold yellow]")
+                            continue
+                        
+                        table = Table(title=f"Found {len(notes)} notes for file '{file_path}'")
+                        table.add_column("ID", style="cyan")
+                        table.add_column("Title", style="green")
+                        table.add_column("Created", style="magenta")
+                        table.add_column("Tags", style="yellow")
+                        
+                        for note in notes:
+                            created = datetime.fromtimestamp(note["created"]).strftime("%Y-%m-%d %H:%M")
+                            tags = ", ".join(note["tags"]) if note["tags"] else ""
+                            table.add_row(note["id"], note["title"], created, tags)
+                        
+                        self.console.print(table)
+                    
+                    else:
+                        self.console.print(f"[bold red]Unknown note command: {sub_command}[/bold red]")
+                        self.console.print("Available commands: save, list, search, get, context")
+                    
+                    continue
+                
+                # Add to conversation history
+                conversation_history.append(("user", user_input))
+                
+                # Check for relevant notes to enhance the context
+                with self.console.status("Checking for relevant notes...", spinner="dots"):
+                    enhanced_context = self._check_for_relevant_notes(user_input)
+                    
+                    if enhanced_context:
+                        system_msg = ("system", f"The following notes may be relevant to the user's query: {enhanced_context}")
+                        conversation_history.append(system_msg)
+                        self.console.print("[bold blue]Found relevant notes in your knowledge base.[/bold blue]")
+                
+                # Get response from LLM
+                with self.console.status("Thinking...", spinner="dots"):
+                    response = self.llm_service.continue_conversation(conversation_history)
+                
+                # Add to conversation history
+                conversation_history.append(("assistant", response))
+                
+                # Display the response
+                self.console.print("\n[bold green]Assistant:[/bold green]")
+                self.console.print(Markdown(response))
+                
+                # Check for code generation
+                file_paths, code_blocks = self._extract_files_from_response(response)
+                
+                if file_paths and code_blocks and len(file_paths) == len(code_blocks):
+                    if Confirm.ask("Save generated files?"):
+                        base_dir = Prompt.ask("Base directory", default=".")
+                        
+                        saved_files = []
+                        for path, code in zip(file_paths, code_blocks):
+                            full_path = os.path.join(base_dir, path)
+                            
+                            # Create directory if it doesn't exist
+                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                            
+                            # Write content to file
+                            with open(full_path, 'w') as f:
+                                f.write(code)
+                            
+                            saved_files.append(full_path)
+                        
+                        self.console.print(f"[bold green]Saved {len(saved_files)} files:[/bold green]")
+                        for path in saved_files:
+                            self.console.print(f"  - {path}")
+            
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                self.console.print(f"[bold red]Error: {str(e)}[/bold red]")
+    
+    def _manage_notes(self):
+        """Manage notes."""
+        while True:
+            self.console.print("\n[bold cyan]Notes Manager[/bold cyan]")
+            self.console.print("[1] List All Notes")
+            self.console.print("[2] Search Notes")
+            self.console.print("[3] View Note")
+            self.console.print("[4] Delete Note")
+            self.console.print("[5] Export Notes")
+            self.console.print("[6] Import Notes")
+            self.console.print("[7] Return to Main Menu")
+            
+            choice = Prompt.ask("Enter your choice", choices=["1", "2", "3", "4", "5", "6", "7"])
+            
+            if choice == "1":
+                self._list_notes()
+            elif choice == "2":
+                self._search_notes()
+            elif choice == "3":
+                self._view_note()
+            elif choice == "4":
+                self._delete_note()
+            elif choice == "5":
+                self._export_notes()
+            elif choice == "6":
+                self._import_notes()
+            elif choice == "7":
+                break
+    
+    def _list_notes(self):
+        """List all notes."""
+        notes = self.notes_manager.list_notes()
+        
+        if not notes:
+            self.console.print("[bold yellow]No notes found.[/bold yellow]")
+            return
+        
+        table = Table(title=f"Found {len(notes)} notes")
+        table.add_column("ID", style="cyan")
+        table.add_column("Title", style="green")
+        table.add_column("Created", style="magenta")
+        table.add_column("Tags", style="yellow")
+        
+        for note in notes:
+            created = datetime.fromtimestamp(note["created"]).strftime("%Y-%m-%d %H:%M")
+            tags = ", ".join(note["tags"]) if note["tags"] else ""
+            table.add_row(note["id"], note["title"], created, tags)
+        
+        self.console.print(table)
+    
+    def _search_notes(self):
+        """Search notes."""
+        query = Prompt.ask("Enter search query")
+        
+        notes = self.notes_manager.search_notes(query)
+        
+        if not notes:
+            self.console.print(f"[bold yellow]No notes found matching '{query}'.[/bold yellow]")
+            return
+        
+        table = Table(title=f"Found {len(notes)} notes matching '{query}'")
+        table.add_column("ID", style="cyan")
+        table.add_column("Title", style="green")
+        table.add_column("Created", style="magenta")
+        table.add_column("Snippet", style="white")
+        
+        for note in notes:
+            created = datetime.fromtimestamp(note["created"]).strftime("%Y-%m-%d %H:%M")
+            
+            # Find snippet around the query
+            content = note["content"]
+            query_pos = content.lower().find(query.lower())
+            if query_pos != -1:
+                start = max(0, query_pos - 20)
+                end = min(len(content), query_pos + len(query) + 50)
+                snippet = content[start:end]
+                
+                # Add ellipsis if truncated
+                if start > 0:
+                    snippet = "..." + snippet
+                if end < len(content):
+                    snippet += "..."
+            else:
+                snippet = ""
+            
+            table.add_row(note["id"], note["title"], created, snippet)
+        
+        self.console.print(table)
+    
+    def _view_note(self):
+        """View a specific note."""
+        note_id = Prompt.ask("Enter note ID")
+        
+        note = self.notes_manager.get_note(note_id)
+        
+        if not note:
+            self.console.print(f"[bold red]Note with ID '{note_id}' not found.[/bold red]")
+            return
+        
+        self.console.print(Panel(Markdown(note["content"]), 
+                                title=note["title"],
+                                subtitle=f"Created: {datetime.fromtimestamp(note['created']).strftime('%Y-%m-%d %H:%M')}"))
+    
+    def _delete_note(self):
+        """Delete a note."""
+        note_id = Prompt.ask("Enter note ID to delete")
+        
+        note = self.notes_manager.get_note(note_id)
+        
+        if not note:
+            self.console.print(f"[bold red]Note with ID '{note_id}' not found.[/bold red]")
+            return
+        
+        if Confirm.ask(f"Are you sure you want to delete note '{note['title']}'?"):
+            success = self.notes_manager.delete_note(note_id)
+            
+            if success:
+                self.console.print(f"[bold green]Note '{note['title']}' deleted successfully.[/bold green]")
+            else:
+                self.console.print(f"[bold red]Error deleting note '{note['title']}'.[/bold red]")
+    
+    def _export_notes(self):
+        """Export notes to a file."""
+        file_path = Prompt.ask("Enter export file path")
+        
+        success = self.notes_manager.export_notes(file_path)
+        
+        if success:
+            self.console.print(f"[bold green]Notes exported successfully to '{file_path}'.[/bold green]")
+        else:
+            self.console.print(f"[bold red]Error exporting notes to '{file_path}'.[/bold red]")
+    
+    def _import_notes(self):
+        """Import notes from a file."""
+        file_path = Prompt.ask("Enter import file path")
+        
+        if not os.path.exists(file_path):
+            self.console.print(f"[bold red]File '{file_path}' does not exist.[/bold red]")
+            return
+        
+        count = self.notes_manager.import_notes(file_path)
+        
+        if count > 0:
+            self.console.print(f"[bold green]Successfully imported {count} notes from '{file_path}'.[/bold green]")
+        else:
+            self.console.print(f"[bold red]No notes imported from '{file_path}'.[/bold red]")
+    
+    def _check_for_relevant_notes(self, user_input: str) -> Optional[str]:
+        """
+        Check if there are relevant notes for the user's input.
+        
+        Args:
+            user_input: User's input message
+            
+        Returns:
+            Enhanced context with relevant notes, or None if no relevant notes found
+        """
+        # Check if the input mentions a specific file
+        file_match = re.search(r"([\"'].+[\"']|\S+\.\w+)", user_input)
+        if file_match:
+            possible_file = file_match.group(1).strip("\"'")
+            if os.path.exists(possible_file):
+                # Get notes related to this file
+                file_notes = self.notes_manager.get_context_notes("file_path", possible_file)
+                if file_notes:
+                    # Format notes for context
+                    context = f"Notes related to file '{possible_file}':\n"
+                    for note in file_notes[:3]:  # Limit to 3 notes to avoid token limits
+                        context += f"- {note['title']}:\n"
+                        
+                        # Get a brief snippet
+                        content_lines = note["content"].split("\n")
+                        relevant_lines = []
+                        for line in content_lines:
+                            if line.startswith("## Assistant"):
