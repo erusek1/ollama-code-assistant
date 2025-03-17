@@ -84,6 +84,7 @@ class TerminalUI:
                 self._manage_notes()
             elif choice == "6":
                 self.console.print("[bold green]Goodbye![/bold green]")
+<<<<<<< HEAD
                 break
     
     def _analyze_code(self):
@@ -843,3 +844,6 @@ class TerminalUI:
         code_blocks = re.findall(code_block_pattern, response)
         
         return file_paths, code_blocks
+=======
+                break
+>>>>>>> d08b410fdda02844924c812a395ff65258040e5b
